@@ -51,8 +51,8 @@ class ImagickCropThumbnailResizer implements ResizerInterface
      */
     public function resize(MediaInterface $media, File $in, File $out, $format, array $settings)
     {
-        if(!extension_loaded('imagick')){
-            $out->setContent($in->getContent());
+        if (!extension_loaded('imagick')) {
+            throw new \RuntimeException('SonataImagickCropThumbnailResizer requires the PHP imagick extension to be installed');
             return;
         }
 
