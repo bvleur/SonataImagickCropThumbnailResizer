@@ -56,12 +56,58 @@ class ImagickCropThumbnailResizer implements ResizerInterface
             return;
         }
 
-        /* Example: 200, 160 */
+        /* Allow "nofill" option to be passed using quality
+         * Quite hacky, but configuration does not allow for extra options.
+         * Would be better fixed with multiple resizers:
+         *   https://github.com/sonata-project/SonataMediaBundle/pull/693
+         */
+        if ($qualityDashPos = strpos($settings['quality'], '-')) {
+            $quality = substr($settings['quality'], 0, $qualityDashPos - 1);
+            $fill = strpos($settings['quality'], 'nofill') === false;
+        } else {
+            $quality = $settings['quality'];
+            $fill = true;
+        }
+
+        /* Example A and B: 200, 160 */
         list($desiredWidth, $desiredHeight) = $this->getDimensions($media, $settings);
 
         $image = new \Imagick();
         $image->readImageBlob($in->getContent());
 
+        if ($fill) {
+            $this->cropToMatchRatio($image, $desiredWidth, $desiredHeight);
+            /* Resize to fill desired dimensions */
+            $image->resizeImage($desiredWidth, $desiredHeight, \imagick::FILTER_CATROM, 1);
+        } else {
+            list($scaleFactorX, $scaleFactorY) = $this->getScaleFactors($image, $desiredWidth, $desiredHeight);
+            /* Only scale down, don't scale up */
+            if ($scaleFactorX < 1 || $scaleFactorY < 1) {
+                /* Make sure we hit the bounding dimension exactly */
+                if ($scaleFactorX < $scaleFactorY) {
+                    $resizeWidth = $desiredWidth;
+                    $resizeHeight = round($image->getImageHeight() * $scaleFactorX);
+                } elseif ($scaleFactorY < $scaleFactorX) {
+                    $resizeWidth = round($image->getImageWidth() * $scaleFactorY);
+                    $resizeHeight = $desiredHeight;
+                } else {
+                    $resizeHeight = $desiredHeight;
+                    $resizeWidth = $desiredWidth;
+                }
+
+                $image->resizeImage($resizeWidth, $resizeHeight, \Imagick::FILTER_CATROM, 1);
+            }
+        }
+
+        /* Save as JPEG */
+        $image->setCompression($image::COMPRESSION_JPEG);
+        $image->setCompressionQuality(isset($quality) ? $quality : 90);
+
+        $out->setContent($image, $this->metadata->get($media, $out->getName()));
+    }
+
+    private function getScaleFactors(\Imagick $image, $desiredWidth, $desiredHeight)
+    {
         /* Example A: 600, 400
          * Example B: 100, 200
          */
@@ -71,30 +117,28 @@ class ImagickCropThumbnailResizer implements ResizerInterface
         /* Example A: 0.333 , 0.4
          * Example B: 2, 0.8
          */
-        $scaleFactorX = $desiredWidth / $originalWidth;
-        $scaleFactorY = $desiredHeight / $originalHeight;
+        return [$desiredWidth / $originalWidth, $desiredHeight / $originalHeight];
+    }
+
+    /**
+     * Match the ratio of the desired dimensions
+     */
+    private function cropToMatchRatio(\Imagick $image, $desiredWidth, $desiredHeight)
+    {
+        list($scaleFactorX, $scaleFactorY) = $this->getScaleFactors($image, $desiredWidth, $desiredHeight);
 
         /* Shave of sides of the image to make it match the desired ratio */
         if ($scaleFactorX < $scaleFactorY) {
             /* Example A: intermediateWidth = 499,5 */
-            $intermediateWidth = ($scaleFactorX * $originalWidth) / $scaleFactorY;
+            $intermediateWidth = ($scaleFactorX * $image->getImageWidth()) / $scaleFactorY;
             /* Example A: Shave floor(50.25) = 50 pixels horizontally of each side */
-            $image->shaveImage(floor(($originalWidth - $intermediateWidth) / 2), 0);
+            $image->shaveImage(floor(($image->getImageWidth() - $intermediateWidth) / 2), 0);
         } elseif ($scaleFactorX > $scaleFactorY) {
             /* Example B: intermediateHeight = (0.8 * 200) / 2 = 80 */
-            $intermediateHeight = ($scaleFactorY * $originalHeight) / $scaleFactorX;
+            $intermediateHeight = ($scaleFactorY * $image->getImageHeight()) / $scaleFactorX;
             /* Example B: Shave floor(60) = 60 pixels veritcally of each side */
-            $image->shaveImage(0, floor(($originalHeight - $intermediateHeight) / 2));
+            $image->shaveImage(0, floor(($image->getImageHeight() - $intermediateHeight) / 2));
         }
-
-        /* Resize to desired dimensions */
-        $image->resizeImage($desiredWidth, $desiredHeight, \imagick::FILTER_CATROM, 1);
-
-        /* Save as JPEG */
-        $image->setCompression($image::COMPRESSION_JPEG);
-        $image->setCompressionQuality(isset($settings['quality']) ? $settings['quality'] : 90);
-
-        $out->setContent($image, $this->metadata->get($media, $out->getName()));
     }
 
     /**
