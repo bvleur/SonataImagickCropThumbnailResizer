@@ -56,18 +56,43 @@ class ImagickCropThumbnailResizer implements ResizerInterface
             return;
         }
 
-        list($width, $height) = $this->getDimensions($media, $settings);
+        /* Example: 200, 160 */
+        list($desiredWidth, $desiredHeight) = $this->getDimensions($media, $settings);
 
         $image = new \Imagick();
+        $image->readImageBlob($in->getContent());
 
-        //$image->setimagecompression($image::COMPRESSION_JPEG);
-        //$image->setcompressionquality(isset($settings['quality']) ? $settings['quality'] : 90);
+        /* Example A: 600, 400
+         * Example B: 100, 200
+         */
+        $originalWidth = $image->getImageWidth();
+        $originalHeight = $image->getImageHeight();
 
-        $image->setCompression($image::COMPRESSION_LOSSLESSJPEG);
+        /* Example A: 0.333 , 0.4
+         * Example B: 2, 0.8
+         */
+        $scaleFactorX = $desiredWidth / $originalWidth;
+        $scaleFactorY = $desiredHeight / $originalHeight;
+
+        /* Shave of sides of the image to make it match the desired ratio */
+        if ($scaleFactorX < $scaleFactorY) {
+            /* Example A: intermediateWidth = 499,5 */
+            $intermediateWidth = ($scaleFactorX * $originalWidth) / $scaleFactorY;
+            /* Example A: Shave floor(50.25) = 50 pixels horizontally of each side */
+            $image->shaveImage(floor(($originalWidth - $intermediateWidth) / 2), 0);
+        } elseif ($scaleFactorX > $scaleFactorY) {
+            /* Example B: intermediateHeight = (0.8 * 200) / 2 = 80 */
+            $intermediateHeight = ($scaleFactorY * $originalHeight) / $scaleFactorX;
+            /* Example B: Shave floor(60) = 60 pixels veritcally of each side */
+            $image->shaveImage(0, floor(($originalHeight - $intermediateHeight) / 2));
+        }
+
+        /* Resize to desired dimensions */
+        $image->resizeImage($desiredWidth, $desiredHeight, \imagick::FILTER_CATROM, 1);
+
+        /* Save as JPEG */
+        $image->setCompression($image::COMPRESSION_JPEG);
         $image->setCompressionQuality(isset($settings['quality']) ? $settings['quality'] : 90);
-
-        $image->readimageblob($in->getContent());
-        $image->cropthumbnailimage($width, $height);
 
         $out->setContent($image, $this->metadata->get($media, $out->getName()));
     }
@@ -95,21 +120,21 @@ class ImagickCropThumbnailResizer implements ResizerInterface
             throw new \RuntimeException(sprintf('Width and height parameter is missing in context "%s" for provider "%s"', $media->getContext(), $media->getProviderName()));
         }
 
-        if($settings['width'] && $settings['height']){
+        if ($settings['width'] && $settings['height']) {
             $width  = $settings['width'];
             $height = $settings['height'];
-        }elseif($settings['width']){
+        } elseif ($settings['width']) {
             $width = $settings['width'];
-            if($media->getWidth() > $media->getHeight()){
+            if ($media->getWidth() > $media->getHeight()) {
                 $height = $width / ($media->getWidth() / $media->getHeight());
-            }else{
+            } else {
                 $height = $width * ($media->getHeight() / $media->getWidth());
             }
-        }else{
+        } else {
             $height = $settings['height'];
-            if($media->getWidth() > $media->getHeight()){
+            if ($media->getWidth() > $media->getHeight()) {
                 $width = $height * ($media->getWidth() / $media->getHeight());
-            }else{
+            }else {
                 $width = $height / ($media->getHeight() / $media->getWidth());
             }
         }
